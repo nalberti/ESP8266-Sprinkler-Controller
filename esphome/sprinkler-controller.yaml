@@ -1,0 +1,270 @@
+substitutions:
+    unit_id: A
+    devicename_unit_id: a
+    zone_1_name: Front Lawn
+    zone_1_valve_id: valve_0
+    esphome_name: irrigation-valve-ctrl-unit-$devicename_unit_id
+    esphome_comment: Single Solenoid Irrigation Control (${unit_id})
+    upper_devicename: Single Solenoid Irrigation Ctrl (${unit_id})
+    irrigation_time_miltiplier_name: time_multiplier_${devicename_unit_id}
+    upper_irrigation_time_multiplier_name: Time Multiplier (${unit_id})
+    uom: Min
+    sensor_update_frequency: 120s
+    devicename: irrigation_valve_controller_unit_$devicename_unit_id
+
+
+
+
+esphome:
+  name: $esphome_name
+  comment: Sprinkler Controler
+  friendly_name: Sprinkler Controler
+
+  on_boot:
+    priority: -100
+    then:
+      # Set default state for Valve Status
+      - text_sensor.template.publish:
+          id: valve_status_$devicename_unit_id
+          state: "Idle"
+      # Set multiplier to 60, convert seconds to minutes
+      - sprinkler.set_multiplier:
+          id: $devicename
+          multiplier: 60
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+  baud_rate: 0
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret encryption_key
+  reboot_timeout: 600s
+  on_client_connected:
+    - logger.log:
+        format: "Client %s connected to API with IP %s"
+        args: ["client_info.c_str()", "client_address.c_str()"]
+  on_client_disconnected:
+    - logger.log: "API client disconnected!"
+
+ota:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.188.18
+    gateway: 192.168.188.1
+    subnet: 255.255.255.0
+    dns1: 192.168.188.5
+  reboot_timeout: 120s
+  power_save_mode: NONE
+  fast_connect: on
+
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Sprinkler-Controller"
+    password: !secret cp_password
+    ap_timeout: 240s
+
+captive_portal:
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: !secret cp_password
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+uart:
+  baud_rate: 9600
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+
+#switch:
+#  - platform: template
+#    name: 'Rain Sensor Switch'
+#    id: relay1
+#    turn_on_action:
+#      - uart.write: [0xA0, 0x01, 0x01, 0xA2]
+#    turn_off_action:
+#      - uart.write: [0xA0, 0x01, 0x00, 0xA1]
+#    optimistic: true
+
+# Text sensors with general information.
+text_sensor:
+  # Expose ESPHome version as sensor.
+  - platform: version
+    name: Version
+
+  # Expose WiFi information as sensor.
+  - platform: wifi_info
+    ip_address:
+      name: $devicename IP
+      update_interval: 60s
+    ssid:
+      name: $devicename SSID
+      update_interval: 60s
+    bssid:
+      name: $devicename BSSID
+      update_interval: 60s
+      
+
+# Expose Time Remaining as a sensor.
+  - platform: template
+    id: time_remaining_$devicename_unit_id
+    name: "Time Remaining ($unit_id)"
+    update_interval: $sensor_update_frequency
+    icon: "mdi:timer-sand"
+    lambda: |-
+      int seconds = round(id($devicename).time_remaining_active_valve().value_or(0));
+      int days = seconds / (24 * 3600);
+      seconds = seconds % (24 * 3600);
+      int hours = seconds / 3600;
+      seconds = seconds % 3600;
+      int minutes = seconds /  60;
+      seconds = seconds % 60;
+        return {
+          ((days ? String(days) + "d " : "") +
+          (hours ? String(hours) + "h " : "") +
+          (minutes ? String(minutes) + "m " : "") +
+          (String(seconds) + "s")
+          ).c_str()};
+
+  # Expose Progress Percent as a sensor.
+  - platform: template
+    id: progress_percent_$devicename_unit_id
+    name: "Progress % ($unit_id)"
+    update_interval: $sensor_update_frequency
+    icon: "mdi:progress-clock"
+    lambda: |-
+      int progress_percent = round(((id($devicename).valve_run_duration_adjusted(id($devicename).active_valve().value_or(0)) - id($devicename).time_remaining_active_valve().value_or(0)) * 100 / id($devicename).valve_run_duration_adjusted(id($devicename).active_valve().value_or(0))));
+      std::string progress_percent_as_string = std::to_string(progress_percent);
+      return progress_percent_as_string;
+
+
+  # Expose Valve Status as a sensor.
+  - platform: template
+    id: valve_status_$devicename_unit_id
+    name: "Status ($unit_id)"
+    update_interval: never
+    icon: "mdi:information-variant"
+
+# human readable update text sensor from sensor:uptime
+ # - platform: template
+ #   name: Uptime Human Readable
+ #   id: uptime_human
+ #   icon: mdi:clock-start
+
+status_led:
+  pin: GPIO2
+
+sensor:
+  # Uptime sensor.
+  - platform: uptime
+    name: ${upper_devicename} Uptime
+
+  # WiFi Signal sensor.
+  - platform: wifi_signal
+    name: ${upper_devicename} WiFi Signal
+    update_interval: 60s
+
+
+
+# human readable uptime sensor output to the text sensor above
+# - platform: uptime
+#   name: sprinkler-relay Uptime in Days
+#   id: uptime_sensor_days
+#    update_interval: 600s
+#    on_raw_value:
+#      then:
+#        - text_sensor.template.publish:
+#            id: uptime_human
+#            state: !lambda |-
+#              int seconds = round(id(uptime_sensor_days).raw_state);
+#             int days = seconds / (24 * 3600);
+#              seconds = seconds % (24 * 3600);
+#              int hours = seconds / 3600;
+#              seconds = seconds % 3600;
+#              int minutes = seconds /  60;
+#              seconds = seconds % 60;
+#              return (
+#                (days ? String(days) + "d " : "") +
+#                (hours ? String(hours) + "h " : "") +
+#               (minutes ? String(minutes) + "m " : "") +
+#                (String(seconds) + "s")
+#             ).c_str();
+
+
+# Set multiplier via number - Sprinklers
+number:
+  - platform: template
+    id: $zone_1_valve_id
+    name: $zone_1_name
+    min_value: 1
+    max_value: 60
+    step: 1
+    unit_of_measurement: $uom
+    icon: "mdi:timer-outline"
+    mode: box # Defines how the number should be displayed in the UI
+    lambda: "return id($devicename).valve_run_duration(0);"
+    set_action:
+      - sprinkler.set_valve_run_duration:
+          id: $devicename
+          valve_number: 0
+          run_duration: !lambda 'return x;'
+
+sprinkler:
+  - id: $devicename
+    valves:
+      - valve_switch: $zone_1_name
+        run_duration: 15s
+        valve_switch_id: ${devicename}_1
+
+#button:
+#  - platform: template
+#    id: sprinkler_pause
+#    name: "Pause ($unit_id)"
+#    icon: "mdi:pause"
+#    on_press:
+#      then:
+#        - text_sensor.template.publish:
+#            id: valve_status_$devicename_unit_id
+#            state: "Paused"
+#        - sprinkler.pause: $devicename
+
+
+
+switch:
+# Hidden switches.
+# Switches that control sprinkler valve relays
+  - platform: template
+    name: Relay Board
+    restore_mode: RESTORE_DEFAULT_OFF # Prevents GPIO pin from going high during boot
+    internal: true # Prevents GPIO switch NAME from showing up in Home Assistant
+    id: ${devicename}_1
+    on_turn_on:
+      - text_sensor.template.publish:
+          id: valve_status_$devicename_unit_id
+          state: "$zone_1_name Active"
+    on_turn_off:
+      - text_sensor.template.publish:
+          id: valve_status_$devicename_unit_id
+          state: "Idle"
+    turn_on_action:
+      - uart.write: [0xA0, 0x01, 0x01, 0xA2]
+    turn_off_action:
+      - uart.write: [0xA0, 0x01, 0x00, 0xA1]
+    optimistic: true
+
+
+
+

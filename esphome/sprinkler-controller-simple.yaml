@@ -1,0 +1,127 @@
+substitutions:
+    unit_id: a
+    devicename_unit_id: a
+    zone_1_name: Front Lawn
+    esphome_name: sprinkler-controler-$devicename_unit_id
+    esphome_comment: Single Solenoid Irrigation Control (${unit_id})
+    upper_devicename: Single Solenoid Irrigation Ctrl (${unit_id})
+    irrigation_time_miltiplier_name: time_multiplier_${devicename_unit_id}
+    upper_irrigation_time_multiplier_name: Time Multiplier (${unit_id})
+    run_duration: 900s
+    uom: Min
+    sensor_update_frequency: 120s
+    devicename: sprinkler_controler_$devicename_unit_id
+
+esphome:
+  name: $esphome_name
+  comment: Sprinkler Controler
+  friendly_name: Sprinkler Controler
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+  baud_rate: 0
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret encryption_key
+  reboot_timeout: 600s
+  on_client_connected:
+    - logger.log:
+        format: "Client %s connected to API with IP %s"
+        args: ["client_info.c_str()", "client_address.c_str()"]
+  on_client_disconnected:
+    - logger.log: "API client disconnected!"
+
+ota:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.188.18
+    gateway: 192.168.188.1
+    subnet: 255.255.255.0
+    dns1: 192.168.188.5
+  reboot_timeout: 120s
+  power_save_mode: NONE
+  fast_connect: on
+
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${devicename}
+    password: !secret cp_password
+    ap_timeout: 240s
+
+captive_portal:
+
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: !secret cp_password
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+uart:
+  baud_rate: 9600
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+
+
+# Text sensors with general information.
+text_sensor:
+  # Expose ESPHome version as sensor.
+  - platform: version
+    name: Version
+
+  # Expose WiFi information as sensor.
+  - platform: wifi_info
+    ip_address:
+      name: $devicename IP
+      update_interval: 60s
+    ssid:
+      name: $devicename SSID
+      update_interval: 60s
+    bssid:
+      name: $devicename BSSID
+      update_interval: 60s
+      
+
+status_led:
+  pin: GPIO2
+
+sensor:
+  # Uptime sensor.
+  - platform: uptime
+    name: ${upper_devicename} Uptime
+
+  # WiFi Signal sensor.
+  - platform: wifi_signal
+    name: ${upper_devicename} WiFi Signal
+    update_interval: 60s
+
+sprinkler:
+  - id: garden_sprinkler_ctrlr
+    valves:
+      - valve_switch: ${zone_1_name}
+        run_duration: ${run_duration}
+        valve_switch_id: lawn_sprinkler_valve
+
+switch:
+  - platform: template
+    id: lawn_sprinkler_valve
+    restore_mode: RESTORE_DEFAULT_OFF # Prevents GPIO pin from going high during boot
+    internal: true # Prevents GPIO switch NAME from showing up in Home Assistant
+    turn_on_action:
+      - uart.write: [0xA0, 0x01, 0x01, 0xA2]
+    turn_off_action:
+      - uart.write: [0xA0, 0x01, 0x00, 0xA1]
+    optimistic: true
